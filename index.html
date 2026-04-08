@@ -3,27 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slider-IO: Pro Pilot</title>
+    <title>Slider-IO: Infinite Procedural</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
-        #ui { position: absolute; bottom: 20px; left: 20px; color: #6366f1; font-family: monospace; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        #ui { position: absolute; bottom: 20px; left: 20px; color: #00ffff; pointer-events: none; text-shadow: 0 0 5px #00ffff; }
         #instructions {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: white; text-align: center; background: rgba(0,0,0,0.9);
-            padding: 30px; border-radius: 15px; border: 1px solid #6366f1; z-index: 10;
+            color: white; text-align: center; background: rgba(0,0,0,0.95);
+            padding: 30px; border: 2px solid #00ffff; z-index: 10;
         }
-        button { padding: 10px 25px; cursor: pointer; background: #6366f1; color: white; border: none; border-radius: 5px; font-weight: bold; }
+        button { padding: 12px 30px; cursor: pointer; background: #00ffff; color: black; border: none; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <div id="ui">VELOCIDADE: <span id="speedDisplay">0</span> km/h</div>
+    <div id="ui">COORDENADAS: <span id="coords">0, 0, 0</span><br>STATUS: HIPERESPAÇO ATIVO</div>
     
     <div id="instructions">
-        <h1>MODO PILOTO FLUIDO</h1>
-        <p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> - Pilotar</p>
-        <p><kbd>SCROLL</kbd> - Zoom (Distância da Câmera)</p>
-        <button id="startBtn">INICIAR MOTORES</button>
+        <h1>UNIVERSO PROCEDURAL</h1>
+        <p>Explore o vácuo infinito</p>
+        <p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> - Motores</p>
+        <p><kbd>SCROLL</kbd> - Zoom da Câmera</p>
+        <button id="startBtn">INICIAR SALTO</button>
     </div>
 
     <script type="importmap">
@@ -40,112 +41,112 @@
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
-        // --- CENA E RENDER ---
+        // --- CENA COM NEBLINA (FOG) PARA INFINITO ---
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+        scene.fog = new THREE.FogExp2(0x000000, 0.0015); // Faz as coisas sumirem suavemente na distância
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 10000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(window.devicePixelRatio);
         document.body.appendChild(renderer.domElement);
 
-        const light = new THREE.PointLight(0xffffff, 1000, 1000);
-        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const light = new THREE.AmbientLight(0xffffff, 0.8);
         scene.add(light);
 
-        // --- VARIÁVEIS DE JOGO ---
+        // --- ESTRELAS PROCEDURAIS ---
+        // Criamos um campo de estrelas gigante que "teleporta" com a nave
+        const starGeo = new THREE.BufferGeometry();
+        const starPos = [];
+        for(let i=0; i<15000; i++) starPos.push(THREE.MathUtils.randFloatSpread(5000), THREE.MathUtils.randFloatSpread(5000), THREE.MathUtils.randFloatSpread(5000));
+        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+        const starField = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 2 }));
+        scene.add(starField);
+
+        // --- ESTRELAS CADENTES ---
+        const shootingStars = [];
+        function createShootingStar() {
+            const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,10)]);
+            const mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true });
+            const line = new THREE.Line(geo, mat);
+            
+            // Posiciona longe da nave mas na frente
+            const angle = Math.random() * Math.PI * 2;
+            line.position.set(
+                camera.position.x + Math.cos(angle) * 500,
+                camera.position.y + THREE.MathUtils.randFloatSpread(500),
+                camera.position.z + Math.sin(angle) * 500 - 1000
+            );
+            line.lookAt(camera.position);
+            scene.add(line);
+            shootingStars.push({ mesh: line, speed: 20 + Math.random() * 30, life: 1.0 });
+        }
+
+        // --- NAVE E CONTROLES ---
         let spaceship;
         let zoomDistance = 15;
-        const targetZoom = { value: 15 };
+        let targetZoom = 15;
         const shipVelocity = new THREE.Vector3();
-        const shipQuaternion = new THREE.Quaternion();
-        const cameraTargetPos = new THREE.Vector3();
-
-        // --- CARREGAR NAVE ---
         const loader = new GLTFLoader();
+
         loader.load('spaceship.glb', (gltf) => {
             spaceship = gltf.scene;
             const box = new THREE.Box3().setFromObject(spaceship);
-            const scale = 4 / box.getSize(new THREE.Vector3()).length();
+            const scale = 5 / box.getSize(new THREE.Vector3()).length();
             spaceship.scale.set(scale, scale, scale);
             scene.add(spaceship);
         });
 
-        // --- CONTROLES E ZOOM ---
         const controls = new PointerLockControls(camera, document.body);
         document.getElementById('startBtn').addEventListener('click', () => controls.lock());
-        
-        window.addEventListener('wheel', (e) => {
-            targetZoom.value += e.deltaY * 0.05;
-            targetZoom.value = THREE.MathUtils.clamp(targetZoom.value, 5, 50);
-        });
+        window.addEventListener('wheel', (e) => targetZoom = THREE.MathUtils.clamp(targetZoom + e.deltaY * 0.05, 5, 60));
 
         let keys = {};
         document.addEventListener('keydown', (e) => keys[e.code] = true);
         document.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        // --- EFEITO DE RASTRO (PARTÍCULAS) ---
-        const trailParticles = [];
-        const trailGeo = new THREE.SphereGeometry(0.1, 4, 4);
-        const trailMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true });
-
-        function createTrail() {
-            if (!spaceship || !keys['KeyW']) return;
-            const particle = new THREE.Mesh(trailGeo, trailMat.clone());
-            // Posiciona na traseira da nave
-            particle.position.copy(spaceship.position);
-            particle.position.add(new THREE.Vector3(0, 0, 2).applyQuaternion(spaceship.quaternion));
-            scene.add(particle);
-            trailParticles.push({ mesh: particle, life: 1.0 });
-        }
-
-        // --- ESTRELAS ---
-        const starGeo = new THREE.BufferGeometry();
-        const starPos = [];
-        for(let i=0; i<8000; i++) starPos.push(THREE.MathUtils.randFloatSpread(4000), THREE.MathUtils.randFloatSpread(4000), THREE.MathUtils.randFloatSpread(4000));
-        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
-        scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.5 })));
-
-        // --- LOOP DE ANIMAÇÃO ---
-        const speedMultiplier = 0.15;
-        const lerpFactor = 0.1; // Suavidade da câmera e movimento
-
+        // --- LOOP PRINCIPAL ---
         function animate() {
             requestAnimationFrame(animate);
 
             if (spaceship && controls.isLocked) {
-                // 1. Movimento Fluido
-                const targetSpeed = keys['KeyW'] ? 2.0 : (keys['KeyS'] ? -1.0 : 0);
-                shipVelocity.z = THREE.MathUtils.lerp(shipVelocity.z, targetSpeed, 0.05);
+                // Movimento Fluido
+                const speed = keys['KeyW'] ? 4.0 : (keys['KeyS'] ? -2.0 : 0);
+                shipVelocity.z = THREE.MathUtils.lerp(shipVelocity.z, speed, 0.03);
                 
                 controls.moveForward(shipVelocity.z);
-                if (keys['KeyA']) controls.moveRight(-0.8);
-                if (keys['KeyD']) controls.moveRight(0.8);
-                if (keys['Space']) camera.position.y += 0.8;
-                if (keys['ShiftLeft']) camera.position.y -= 0.8;
+                if (keys['KeyA']) controls.moveRight(-1.5);
+                if (keys['KeyD']) controls.moveRight(1.5);
+                if (keys['Space']) camera.position.y += 1.5;
+                if (keys['ShiftLeft']) camera.position.y -= 1.5;
 
-                // 2. Nave segue a Câmera com suavidade (Lerp)
-                spaceship.position.lerp(camera.position, lerpFactor);
-                spaceship.quaternion.slerp(camera.quaternion, lerpFactor);
+                // Nave segue a câmera com suavidade
+                spaceship.position.lerp(camera.position, 0.15);
+                spaceship.quaternion.slerp(camera.quaternion, 0.15);
                 
-                // Posiciona a nave na frente da câmera baseado no Zoom
-                zoomDistance = THREE.MathUtils.lerp(zoomDistance, targetZoom.value, 0.1);
+                zoomDistance = THREE.MathUtils.lerp(zoomDistance, targetZoom, 0.1);
                 spaceship.translateZ(-zoomDistance);
-                spaceship.translateY(-zoomDistance * 0.2); // Leve inclinação para baixo
+                spaceship.translateY(-zoomDistance * 0.2);
 
-                // 3. Rastro
-                createTrail();
-                for (let i = trailParticles.length - 1; i >= 0; i--) {
-                    const p = trailParticles[i];
-                    p.life -= 0.02;
-                    p.mesh.material.opacity = p.life;
-                    p.mesh.scale.setScalar(p.life);
-                    if (p.life <= 0) {
-                        scene.remove(p.mesh);
-                        trailParticles.splice(i, 1);
+                // PROCEDURAL: Mantém o campo de estrelas sempre ao redor da nave
+                starField.position.copy(camera.position);
+
+                // Gerar Estrelas Cadentes aleatoriamente
+                if(Math.random() < 0.02) createShootingStar();
+                
+                // Atualizar Estrelas Cadentes
+                for(let i = shootingStars.length - 1; i >= 0; i--) {
+                    const s = shootingStars[i];
+                    s.mesh.translateZ(s.speed);
+                    s.life -= 0.01;
+                    s.mesh.material.opacity = s.life;
+                    if(s.life <= 0) {
+                        scene.remove(s.mesh);
+                        shootingStars.splice(i, 1);
                     }
                 }
 
-                document.getElementById('speedDisplay').innerText = Math.abs(Math.round(shipVelocity.z * 100));
+                document.getElementById('coords').innerText = 
+                    `${Math.round(camera.position.x)}, ${Math.round(camera.position.y)}, ${Math.round(camera.position.z)}`;
             }
 
             renderer.render(scene, camera);
