@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universo 3D Slider-IO</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+
+        /* Interface Flutuante */
+        #ui-container {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 15, 15, 0.7);
+            backdrop-filter: blur(12px);
+            padding: 20px;
+            border-radius: 16px;
+            display: flex;
+            gap: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 100;
+            width: 90%;
+            max-width: 450px;
+        }
+
+        input {
+            flex-grow: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid #333;
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            outline: none;
+            font-size: 14px;
+        }
+
+        input:focus { border-color: #6366f1; }
+
+        button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+
+        button:hover { background: #4f46e5; transform: translateY(-2px); }
+        button:active { transform: translateY(0); }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <input type="text" id="msgInput" placeholder="Escreva algo no universo..." maxlength="60">
+        <button id="sendBtn">Postar</button>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getDatabase, ref, push, onChildAdded } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+        // --- SUA CONFIGURAÇÃO FIREBASE ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCfdgkO3WzaxXT-djAA6MsLC2m26c9optU",
+            authDomain: "slider-io.firebaseapp.com",
+            databaseURL: "https://slider-io-default-rtdb.firebaseio.com",
+            projectId: "slider-io",
+            storageBucket: "slider-io.firebasestorage.app",
+            messagingSenderId: "395647141464",
+            appId: "1:395647141464:web:251cc58a3e0e90ca262c2d"
+        };
+
+        // Inicialização
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const postsRef = ref(db, 'posts');
+
+        // --- CONFIGURAÇÃO DA CENA 3D ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 3000);
+        camera.position.set(0, 50, 150);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.autoRotate = false;
+
+        // Grupo que contém todos os post-its (para girar o universo)
+        const worldGroup = new THREE.Group();
+        scene.add(worldGroup);
+
+        // Adicionar estrelas ao fundo
+        const starsGeometry = new THREE.BufferGeometry();
+        const starsPos = [];
+        for(let i=0; i<10000; i++) {
+            starsPos.push(THREE.MathUtils.randFloatSpread(2000), THREE.MathUtils.randFloatSpread(2000), THREE.MathUtils.randFloatSpread(2000));
+        }
+        starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starsPos, 3));
+        const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.7 });
+        scene.add(new THREE.Points(starsGeometry, starsMaterial));
+
+        // --- GERADOR DE TEXTURA ---
+        function createPostItTexture(text, color) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 512;
+            canvas.height = 512;
+
+            // Fundo colorido (estilo post-it)
+            ctx.fillStyle = color || '#ffeb3b';
+            ctx.fillRect(0, 0, 512, 512);
+            
+            // Sombra interna leve
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+            ctx.lineWidth = 30;
+            ctx.strokeRect(0, 0, 512, 512);
+
+            // Texto
+            ctx.fillStyle = '#111';
+            ctx.font = 'bold 45px sans-serif';
+            ctx.textAlign = 'center';
+            
+            // Quebra de texto simples
+            const words = text.split(' ');
+            let line = '';
+            let lines = [];
+            for(let n = 0; n < words.length; n++) {
+                let testLine = line + words[n] + ' ';
+                if (testLine.length > 15) {
+                    lines.push(line);
+                    line = words[n] + ' ';
+                } else { line = testLine; }
+            }
+            lines.push(line);
+
+            lines.forEach((l, i) => {
+                ctx.fillText(l.trim(), 256, 200 + (i * 60));
+            });
+
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        // --- FUNÇÃO PARA CRIAR O OBJETO 3D ---
+        function spawnPostIt(data) {
+            const geometry = new THREE.PlaneGeometry(20, 20);
+            const material = new THREE.MeshBasicMaterial({ 
+                map: createPostItTexture(data.text, data.color),
+                side: THREE.DoubleSide,
+                transparent: true
+            });
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(data.x, data.y, data.z);
+            mesh.rotation.set(data.rx, data.ry, 0);
+            
+            worldGroup.add(mesh);
+        }
+
+        // --- SINCRONIZAÇÃO COM FIREBASE ---
+        onChildAdded(postsRef, (snapshot) => {
+            const data = snapshot.val();
+            spawnPostIt(data);
+        });
+
+        // Enviar dados
+        const input = document.getElementById('msgInput');
+        const btn = document.getElementById('sendBtn');
+
+        function sendData() {
+            const text = input.value.trim();
+            if(text) {
+                const colors = ['#ff7eb9', '#ffeb3b', '#7afcff', '#feff9c', '#fff740'];
+                push(postsRef, {
+                    text: text,
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    x: THREE.MathUtils.randFloatSpread(400),
+                    y: THREE.MathUtils.randFloatSpread(400),
+                    z: THREE.MathUtils.randFloatSpread(400),
+                    rx: Math.random() * Math.PI,
+                    ry: Math.random() * Math.PI
+                });
+                input.value = '';
+            }
+        }
+
+        btn.addEventListener('click', sendData);
+        input.addEventListener('keypress', (e) => { if(e.key === 'Enter') sendData(); });
+
+        // --- LOOP DE ANIMAÇÃO ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Rotação lenta e constante do universo
+            worldGroup.rotation.y += 0.0005;
+            worldGroup.rotation.z += 0.0002;
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Responsividade
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
