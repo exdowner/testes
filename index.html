@@ -3,26 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slider-IO: Infinite Fixed</title>
+    <title>Slider-IO: HyperSpeed</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: monospace; }
-        #ui { position: absolute; bottom: 20px; left: 20px; color: #00ffff; pointer-events: none; z-index: 5; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', monospace; }
+        #ui { position: absolute; bottom: 20px; left: 20px; color: #00ffff; pointer-events: none; z-index: 5; text-shadow: 0 0 8px #00ffff;}
         #instructions {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(0,0,0,0.9); color: white; z-index: 100;
+            background: rgba(0,0,0,0.95); color: white; z-index: 100;
         }
-        button { padding: 15px 40px; cursor: pointer; background: #00ffff; color: black; border: none; font-weight: bold; }
+        button { padding: 15px 40px; cursor: pointer; background: #00ffff; color: black; border: none; font-weight: bold; font-size: 1.2em; border-radius: 5px; }
+        button:hover { background: #fff; box-shadow: 0 0 20px #00ffff; }
     </style>
 </head>
 <body>
 
-    <div id="ui">COORDENADAS: <span id="coords">0, 0, 0</span></div>
+    <div id="ui">VELOCIDADE: <span id="speedDisplay">0</span> LY/h</div>
     
     <div id="instructions">
-        <h1>SISTEMA OPERACIONAL ATIVO</h1>
-        <p>W, A, S, D para pilotar | Scroll para Zoom</p>
-        <button id="startBtn">INICIAR MOTORES</button>
+        <h1 style="color:#00ffff; letter-spacing: 5px;">WARP DRIVE</h1>
+        <p>Segure <kbd>W</kbd> para acelerar e sentir a velocidade</p>
+        <button id="startBtn">INICIAR SALTO</button>
     </div>
 
     <script type="importmap">
@@ -40,44 +41,47 @@
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
         const scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x000000, 0.0008);
+        // Neblina preta esconde o "fim" do cenário
+        scene.fog = new THREE.FogExp2(0x000000, 0.0005);
 
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 20000);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 30000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 1));
+        scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 
-        // --- ESTRELAS DE FUNDO ---
+        // --- POEIRA ESTELAR (Para sensação de movimento) ---
+        // Criamos estrelas em um volume imenso, mas fixas no espaço
+        const starCount = 40000;
         const starGeo = new THREE.BufferGeometry();
         const starPos = [];
-        for(let i=0; i<30000; i++) starPos.push(THREE.MathUtils.randFloatSpread(10000), THREE.MathUtils.randFloatSpread(10000), THREE.MathUtils.randFloatSpread(10000));
+        for(let i=0; i<starCount; i++) {
+            starPos.push(
+                THREE.MathUtils.randFloatSpread(10000), 
+                THREE.MathUtils.randFloatSpread(10000), 
+                THREE.MathUtils.randFloatSpread(10000)
+            );
+        }
         starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
-        const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 2 }));
+        const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 3, sizeAttenuation: true }));
         scene.add(stars);
 
-        // --- CARREGAMENTO DA NAVE ---
-        let spaceship = new THREE.Group(); // Começa como um grupo vazio para não dar erro
+        // --- NAVE ---
+        let spaceship = new THREE.Group();
         const loader = new GLTFLoader();
-        
-        loader.load('spaceship.glb', 
-            (gltf) => {
-                const model = gltf.scene;
-                const box = new THREE.Box3().setFromObject(model);
-                const size = box.getSize(new THREE.Vector3()).length();
-                model.scale.setScalar(4 / size);
-                spaceship.add(model);
-                console.log("Nave carregada com sucesso.");
-            },
-            undefined,
-            () => {
-                console.warn("spaceship.glb não encontrado. Usando nave de emergência.");
-                const backupModel = new THREE.Mesh(new THREE.ConeGeometry(1, 4, 8), new THREE.MeshBasicMaterial({color: 0x00ffff, wireframe: true}));
-                backupModel.rotation.x = Math.PI / 2;
-                spaceship.add(backupModel);
-            }
-        );
+        loader.load('spaceship.glb', (gltf) => {
+            const model = gltf.scene;
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3()).length();
+            model.scale.setScalar(5 / size);
+            spaceship.add(model);
+        }, undefined, () => {
+            // Backup se não achar o arquivo
+            const backup = new THREE.Mesh(new THREE.ConeGeometry(1, 4, 8), new THREE.MeshBasicMaterial({color: 0x00ffff, wireframe: true}));
+            backup.rotation.x = Math.PI/2;
+            spaceship.add(backup);
+        });
         scene.add(spaceship);
 
         // --- CONTROLES ---
@@ -91,26 +95,32 @@
         document.addEventListener('keydown', (e) => keys[e.code] = true);
         document.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        // --- ZOOM E RASTRO ---
-        let zoomDist = 5;
-        window.addEventListener('wheel', (e) => zoomDist = THREE.MathUtils.clamp(zoomDist + e.deltaY * 0.01, 1, 40));
-
+        // --- RASTRO E ZOOM ---
+        let zoomDist = 2.5; 
         const trails = [];
         function createTrail() {
-            const geo = new THREE.SphereGeometry(0.15, 6, 6);
-            const mat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.8 });
-            const p = new THREE.Mesh(geo, mat);
+            const p = new THREE.Mesh(
+                new THREE.BoxGeometry(0.2, 0.2, 2), 
+                new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true })
+            );
             p.position.copy(spaceship.position);
+            p.quaternion.copy(spaceship.quaternion);
+            p.translateZ(2); // Atrás da nave
             scene.add(p);
             trails.push({ mesh: p, life: 1.0 });
         }
 
+        // --- ESTRELAS CADENTES ---
         const shootingStars = [];
         function createShootingStar() {
-            const geo = new THREE.BoxGeometry(0.5, 0.5, 20);
+            const geo = new THREE.CapsuleGeometry(0.1, 50, 4, 8);
             const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
             const s = new THREE.Mesh(geo, mat);
-            s.position.set(camera.position.x + THREE.MathUtils.randFloatSpread(2000), camera.position.y + THREE.MathUtils.randFloatSpread(2000), camera.position.z - 2000);
+            // Spawna na frente do jogador
+            const offset = new THREE.Vector3(THREE.MathUtils.randFloatSpread(2000), THREE.MathUtils.randFloatSpread(2000), -2000);
+            offset.applyQuaternion(camera.quaternion);
+            s.position.copy(camera.position).add(offset);
+            s.lookAt(camera.position);
             scene.add(s);
             shootingStars.push(s);
         }
@@ -121,49 +131,52 @@
             requestAnimationFrame(animate);
 
             if (controls.isLocked) {
-                // 1. Movimento
-                const accel = keys['KeyW'] ? 1.5 : (keys['KeyS'] ? -1.0 : 0);
-                velocity = THREE.MathUtils.lerp(velocity, accel, 0.05);
+                // Aceleração progressiva
+                const targetSpeed = keys['KeyW'] ? 8.0 : (keys['KeyS'] ? -4.0 : 0);
+                velocity = THREE.MathUtils.lerp(velocity, targetSpeed, 0.02);
                 
                 controls.moveForward(velocity);
-                if (keys['KeyA']) controls.moveRight(-1.5);
-                if (keys['KeyD']) controls.moveRight(1.5);
-                if (keys['Space']) camera.position.y += 1.5;
-                if (keys['ShiftLeft']) camera.position.y -= 1.5;
+                if (keys['KeyA']) controls.moveRight(-3);
+                if (keys['KeyD']) controls.moveRight(3);
+                if (keys['Space']) camera.position.y += 3;
+                if (keys['ShiftLeft']) camera.position.y -= 3;
 
-                // 2. Nave segue Câmera
+                // Nave colada na câmera
                 spaceship.position.copy(camera.position);
                 spaceship.quaternion.copy(camera.quaternion);
                 spaceship.translateZ(-zoomDist);
-                spaceship.translateY(-zoomDist * 0.2);
+                spaceship.translateY(-0.8);
 
-                // 3. Efeitos
-                if (Math.abs(velocity) > 0.1) createTrail();
+                // Efeito visual de rastro ao mover
+                if (Math.abs(velocity) > 0.5) {
+                    createTrail();
+                }
+
+                // Estrelas cadentes aleatórias
                 if (Math.random() < 0.05) createShootingStar();
 
-                // Atualizar Rastro
+                // Atualizar partículas de rastro
                 for(let i=trails.length-1; i>=0; i--) {
-                    trails[i].life -= 0.02;
+                    trails[i].life -= 0.03;
                     trails[i].mesh.material.opacity = trails[i].life;
-                    trails[i].mesh.scale.setScalar(trails[i].life);
                     if(trails[i].life <= 0) {
                         scene.remove(trails[i].mesh);
                         trails.splice(i, 1);
                     }
                 }
 
-                // Atualizar Estrelas Cadentes
-                shootingStars.forEach((s, i) => {
-                    s.translateZ(50);
-                    if (s.position.distanceTo(camera.position) > 4000) {
-                        scene.remove(s);
+                // Mover estrelas cadentes super rápido
+                for(let i=shootingStars.length-1; i>=0; i--) {
+                    shootingStars[i].translateZ(100);
+                    if(shootingStars[i].position.distanceTo(camera.position) > 5000) {
+                        scene.remove(shootingStars[i]);
                         shootingStars.splice(i, 1);
                     }
-                });
+                }
 
-                stars.position.copy(camera.position);
-                document.getElementById('coords').innerText = `${Math.round(camera.position.x)}, ${Math.round(camera.position.y)}, ${Math.round(camera.position.z)}`;
+                document.getElementById('speedDisplay').innerText = Math.abs(Math.round(velocity * 100));
             }
+
             renderer.render(scene, camera);
         }
         animate();
