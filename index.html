@@ -3,35 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slider-IO: Spaceship Pilot</title>
+    <title>Slider-IO: Pro Pilot</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        #ui { position: absolute; bottom: 20px; left: 20px; color: #6366f1; font-family: monospace; pointer-events: none; }
         #instructions {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            text-align: center;
-            background: rgba(0,0,0,0.8);
-            padding: 20px;
-            border-radius: 10px;
-            border: 1px solid #444;
-            z-index: 10;
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; text-align: center; background: rgba(0,0,0,0.9);
+            padding: 30px; border-radius: 15px; border: 1px solid #6366f1; z-index: 10;
         }
-        kbd { background: #333; border: 1px solid #555; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
-        #loading { position: absolute; top: 10px; left: 10px; color: lime; font-family: monospace; }
+        button { padding: 10px 25px; cursor: pointer; background: #6366f1; color: white; border: none; border-radius: 5px; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <div id="loading">Carregando Nave...</div>
+    <div id="ui">VELOCIDADE: <span id="speedDisplay">0</span> km/h</div>
+    
     <div id="instructions">
-        <h1>PILOTE A NAVE</h1>
-        <p>Mover: <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></p>
-        <p>Subir/Descer: <kbd>Espaço</kbd> | <kbd>Shift</kbd></p>
-        <p>Girar: <kbd>Mouse</kbd></p>
-        <button id="startBtn" style="padding:10px 20px; cursor:pointer;">DECOLAR</button>
+        <h1>MODO PILOTO FLUIDO</h1>
+        <p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> - Pilotar</p>
+        <p><kbd>SCROLL</kbd> - Zoom (Distância da Câmera)</p>
+        <button id="startBtn">INICIAR MOTORES</button>
     </div>
 
     <script type="importmap">
@@ -47,114 +39,118 @@
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getDatabase, ref, onChildAdded } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-        // --- FIREBASE ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyCfdgkO3WzaxXT-djAA6MsLC2m26c9optU",
-            authDomain: "slider-io.firebaseapp.com",
-            databaseURL: "https://slider-io-default-rtdb.firebaseio.com",
-            projectId: "slider-io",
-            storageBucket: "slider-io.firebasestorage.app",
-            messagingSenderId: "395647141464",
-            appId: "1:395647141464:web:251cc58a3e0e90ca262c2d"
-        };
-        const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-        const postsRef = ref(db, 'posts');
-
-        // --- CENA ---
+        // --- CENA E RENDER ---
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
         document.body.appendChild(renderer.domElement);
 
-        const light = new THREE.HemisphereLight(0xffffff, 0x444444, 2);
+        const light = new THREE.PointLight(0xffffff, 1000, 1000);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
         scene.add(light);
 
-        // --- CARREGAR NAVE ---
+        // --- VARIÁVEIS DE JOGO ---
         let spaceship;
+        let zoomDistance = 15;
+        const targetZoom = { value: 15 };
+        const shipVelocity = new THREE.Vector3();
+        const shipQuaternion = new THREE.Quaternion();
+        const cameraTargetPos = new THREE.Vector3();
+
+        // --- CARREGAR NAVE ---
         const loader = new GLTFLoader();
         loader.load('spaceship.glb', (gltf) => {
             spaceship = gltf.scene;
-
-            // AJUSTE AUTOMÁTICO DE TAMANHO
             const box = new THREE.Box3().setFromObject(spaceship);
-            const size = box.getSize(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z);
-            const scale = 5 / maxDim; // Ajusta para que a nave tenha 5 unidades de tamanho
+            const scale = 4 / box.getSize(new THREE.Vector3()).length();
             spaceship.scale.set(scale, scale, scale);
-            
             scene.add(spaceship);
-            document.getElementById('loading').style.display = 'none';
-        }, undefined, (error) => {
-            console.error("Erro ao carregar spaceship.glb. Verifique se o arquivo está na mesma pasta.", error);
         });
 
-        // --- CONTROLES ---
+        // --- CONTROLES E ZOOM ---
         const controls = new PointerLockControls(camera, document.body);
         document.getElementById('startBtn').addEventListener('click', () => controls.lock());
-        controls.addEventListener('lock', () => document.getElementById('instructions').style.display = 'none');
-        controls.addEventListener('unlock', () => document.getElementById('instructions').style.display = 'block');
+        
+        window.addEventListener('wheel', (e) => {
+            targetZoom.value += e.deltaY * 0.05;
+            targetZoom.value = THREE.MathUtils.clamp(targetZoom.value, 5, 50);
+        });
 
         let keys = {};
         document.addEventListener('keydown', (e) => keys[e.code] = true);
         document.addEventListener('keyup', (e) => keys[e.code] = false);
 
-        // Estrelas
+        // --- EFEITO DE RASTRO (PARTÍCULAS) ---
+        const trailParticles = [];
+        const trailGeo = new THREE.SphereGeometry(0.1, 4, 4);
+        const trailMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true });
+
+        function createTrail() {
+            if (!spaceship || !keys['KeyW']) return;
+            const particle = new THREE.Mesh(trailGeo, trailMat.clone());
+            // Posiciona na traseira da nave
+            particle.position.copy(spaceship.position);
+            particle.position.add(new THREE.Vector3(0, 0, 2).applyQuaternion(spaceship.quaternion));
+            scene.add(particle);
+            trailParticles.push({ mesh: particle, life: 1.0 });
+        }
+
+        // --- ESTRELAS ---
         const starGeo = new THREE.BufferGeometry();
         const starPos = [];
-        for(let i=0; i<10000; i++) starPos.push(THREE.MathUtils.randFloatSpread(5000), THREE.MathUtils.randFloatSpread(5000), THREE.MathUtils.randFloatSpread(5000));
+        for(let i=0; i<8000; i++) starPos.push(THREE.MathUtils.randFloatSpread(4000), THREE.MathUtils.randFloatSpread(4000), THREE.MathUtils.randFloatSpread(4000));
         starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
-        scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 2 })));
+        scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.5 })));
 
-        // --- POST-ITS (Firebase) ---
-        onChildAdded(postsRef, (snapshot) => {
-            const data = snapshot.val();
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = 256; canvas.height = 256;
-            ctx.fillStyle = data.color || '#ffff00';
-            ctx.fillRect(0,0,256,256);
-            ctx.fillStyle = 'black';
-            ctx.font = '20px Arial';
-            ctx.fillText(data.text || '', 20, 100);
-            
-            const mesh = new THREE.Mesh(
-                new THREE.PlaneGeometry(20, 20),
-                new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), side: THREE.DoubleSide })
-            );
-            mesh.position.set(data.x, data.y, data.z);
-            scene.add(mesh);
-        });
+        // --- LOOP DE ANIMAÇÃO ---
+        const speedMultiplier = 0.15;
+        const lerpFactor = 0.1; // Suavidade da câmera e movimento
 
-        // --- LOOP ---
-        const velocity = new THREE.Vector3();
         function animate() {
             requestAnimationFrame(animate);
 
-            if (controls.isLocked && spaceship) {
-                const speed = 2.5;
+            if (spaceship && controls.isLocked) {
+                // 1. Movimento Fluido
+                const targetSpeed = keys['KeyW'] ? 2.0 : (keys['KeyS'] ? -1.0 : 0);
+                shipVelocity.z = THREE.MathUtils.lerp(shipVelocity.z, targetSpeed, 0.05);
                 
-                // Movimentação baseada na rotação da câmera
-                if (keys['KeyW']) controls.moveForward(speed);
-                if (keys['KeyS']) controls.moveForward(-speed);
-                if (keys['KeyA']) controls.moveRight(-speed);
-                if (keys['KeyD']) controls.moveRight(speed);
-                if (keys['Space']) camera.position.y += speed;
-                if (keys['ShiftLeft']) camera.position.y -= speed;
+                controls.moveForward(shipVelocity.z);
+                if (keys['KeyA']) controls.moveRight(-0.8);
+                if (keys['KeyD']) controls.moveRight(0.8);
+                if (keys['Space']) camera.position.y += 0.8;
+                if (keys['ShiftLeft']) camera.position.y -= 0.8;
 
-                // Faz a nave seguir a câmera (posicionada um pouco a frente/baixo)
-                spaceship.position.copy(camera.position);
-                spaceship.quaternion.copy(camera.quaternion);
-                spaceship.translateZ(-15); // Coloca a nave na frente da câmera
-                spaceship.translateY(-5);  // Ajusta altura da nave na tela
+                // 2. Nave segue a Câmera com suavidade (Lerp)
+                spaceship.position.lerp(camera.position, lerpFactor);
+                spaceship.quaternion.slerp(camera.quaternion, lerpFactor);
+                
+                // Posiciona a nave na frente da câmera baseado no Zoom
+                zoomDistance = THREE.MathUtils.lerp(zoomDistance, targetZoom.value, 0.1);
+                spaceship.translateZ(-zoomDistance);
+                spaceship.translateY(-zoomDistance * 0.2); // Leve inclinação para baixo
+
+                // 3. Rastro
+                createTrail();
+                for (let i = trailParticles.length - 1; i >= 0; i--) {
+                    const p = trailParticles[i];
+                    p.life -= 0.02;
+                    p.mesh.material.opacity = p.life;
+                    p.mesh.scale.setScalar(p.life);
+                    if (p.life <= 0) {
+                        scene.remove(p.mesh);
+                        trailParticles.splice(i, 1);
+                    }
+                }
+
+                document.getElementById('speedDisplay').innerText = Math.abs(Math.round(shipVelocity.z * 100));
             }
 
             renderer.render(scene, camera);
         }
+
         animate();
 
         window.addEventListener('resize', () => {
